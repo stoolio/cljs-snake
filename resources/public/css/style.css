@@ -1,2 +1,9 @@
 /* some style */
 
+body {
+  background-color: white;
+}
+
+canvas {
+  background-color: black;
+}

@@ -7,7 +7,11 @@
 
 ;; define your app data so that it doesn't get over-written on reload
 
-(defonce app-state (atom {:text "Hello world!"}))
+(defonce app-state (atom {:title "Clojurescript Snake"
+                          :position '([3 5] [2 5] [1 5])
+                          :length 3
+                          :direction :right
+                          :apples []}))
 
 (defn on-js-reload []
   ;; optionally touch your app-state to force rerendering depending on
@@ -26,26 +30,37 @@
   (set! (.-fillStyle ctx) color)
   (.fillRect ctx x y size size))
 
+(def pi (.-PI js/Math))
+
+(def circ-angle (+ pi (* 3 pi)))
+
+(defn draw-circle [ctx x y size color]
+  (set! (.-fillStyle ctx) color)
+  (.beginPath ctx)
+  (.arc ctx x y size 0 circ-angle)
+  (.fill ctx))
+
 (def raf-chan (chan (sliding-buffer 1)))
 
-#_(defn raf-cb
+(defn raf-cb
   [start-time timestamp]
-  (let [elapsed (min 1 (- timestamp start-time))]
-    (put! raf-chan elapsed)))
+  (let [elapsed (- timestamp @start-time)]
+    (reset! start-time timestamp)
+    (go (>! raf-chan elapsed))))
 
 (def start-time (atom 0))
 
-(defn raf-loop
-  [timestamp]
-  (put! raf-chan (- timestamp @start-time))
-  (reset! start-time timestamp)
-  (.requestAnimationFrame js/window raf-loop))
+(defn raf-loop [timestamp]
+  (do
+    (raf-cb start-time timestamp)
+    (.requestAnimationFrame js/window raf-loop)))
 
 (defn start-raf
   []
   (.requestAnimationFrame js/window raf-loop))
 
-(start-raf)
+(raf-loop 0)
+#_(start-raf)
 
 (def draw (chan))
 
@@ -59,34 +74,65 @@
       (fn [e] (put! out e)))
     out))
 
-; direction of movement
-; used by draw loop
-; changed by keyboard handler
-(def direction (atom [1 0]))
+(def directions {:left [-1 0]
+                 :up   [0 -1]
+                 :right [1 0]
+                 :down [0 1]})
 
 ; keyboard handling code
 (let [keypress (listen js/window "keypress")]
   (go (while true
-        (let [key-code (.-charCode (<! keypress))]
+        (let [key-code (.-charCode (<! keypress)) dir (:direction @app-state)]
           (case key-code
-                37 (reset! direction [-1 0])
-                38 (reset! direction [0 -1])
-                39 (reset! direction [1 0])
-                40 (reset! direction [0 1]))))))
+                37 (when (contains? #{:up :down} dir) (swap! app-state #(assoc-in % [:direction] :left)))
+                38 (when (contains? #{:left :right} dir) (swap! app-state #(assoc-in % [:direction] :up)))
+                39 (when (contains? #{:up :down} dir) (swap! app-state #(assoc-in % [:direction] :right)))
+                40 (when (contains? #{:left :right} dir) (swap! app-state #(assoc-in % [:direction] :down)))
+                nil)))))
+
+(defn pos-add [[x1 y1] [x2 y2]]
+  [(+ x1 x2) (+ y1 y2)])
+
+(defn calc-move [{len :length apps :apples pos :position dir :direction}]
+  {:title "It worked!"
+   :length len
+   :position (take len (cons (pos-add (first pos) (directions dir)) pos))
+   :direction dir
+   :apples apps})
+
+(defn draw-snake [parts]
+  (doseq [[x y] parts]
+    (draw-box ctx (* 25 x) (* 25 y) 25 "rgb(0,200,0)")))
+
+(defn gen-apple []
+  (swap! app-state (fn [state] (assoc-in state [:apples] (conj (:apples state) [(rand-int 25) (rand-int 25)])))))
+
+(defn draw-apples [apples]
+  (doseq [[x y] apples]
+    (draw-box ctx (* 25 x) (* 25 y) 25 "rgb(200,0,0)")))
+
+(defn add-segment []
+  (swap! app-state (fn [state] (assoc-in state [:length] (inc (:length state))))))
+
+(defn collision [apples snake]
+  (doseq [apple apples]
+    (if (= apple snake)
+      (add-segment))))
 
 ; draw loop (and calcs positions etc
 (go
-  (let [x (atom 0)
-        y (atom 0)]
-    (while true
-    (let [i (<! draw)
-          x-dir (first @direction)
-          y-dir (last @direction)
-          x (reset! x (min 475 (max 0 (+ (* 25 x-dir) @x))))
-          y (reset! y (min 475 (max 0 (+ (* 25 y-dir) @y))))]
+  (while true
+    (let [i (<! draw)]
       (.clearRect ctx 0 0 500 500)
-      (draw-box ctx x y 25 (random-color))))))
+      (when (= 0 (rem i 100)) (do (println "Apple!") (gen-apple)))
+      (draw-snake (:position @app-state))
+      (draw-apples (:apples @app-state))
+      (collision (:apples @app-state) (first (:position @app-state)))
+      (swap! app-state calc-move))))
 
+; puts frame-number on draw channel
+; call-every milliseconds
+; it's based on time (not frames) but it only spits a number to draw
 (defn start-loop [call-every]
   (go
     (while true
@@ -99,4 +145,5 @@
             (recur (<! raf-chan) 0 (inc i)))
           (recur (<! raf-chan) (+ elapsed acc) i))))))
 
-(start-loop 100)
+(set! (.-innerText (.getElementById js/document "fancy")) (:title @app-state))
+(start-loop 150)
