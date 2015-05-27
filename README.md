@@ -1,6 +1,18 @@
 # Snake in Clojurescript
 
-This is canvas based, but I would like to properly strip out the logic so you could have an ascii version or something. That would be fun
+This is canvas based, but I would like to properly strip out the logic so you could have an ascii version or something. That would be fun.
+
+Anyways, you can move the snake. It stops when you hit the "walls" and he grows when you pick up a red block (apple?). You can also crash into yourself.
+
+One bit of wierdness, apples positions are picked randomly, and if they appear where the snake currently is, something strange happens. They should get redrawn, but some debugging is in order. Still, the logical fix is to prevent them from having a current position occupied by something else.
+
+Arrow keys move.
+
+#### Super Secret Debug Keys
+
+* `r` : reloads game and starts over without refresh
+* `-` : slows things down (not the numpad one)
+* `+` : speeds things up (again, no numpad)
 
 ## What!?!
 
@@ -8,24 +20,18 @@ Install leiningen if you don't have it, `git clone` the repo. `lein figwheel` an
 
 ## Is it fun?
 
-Currently you can steer a green snake around. He doesn't collide with the bounds, so you can lost him.
+It's almost fun.
 
-Red blocks appear every so often. If you collide with them, they won't disappear (yet), but your snake will grow.
-
-So, not very fun.
+The basics are implemented. Now, scaling difficulty, levels, and more fun are on the horizon. Or, fancy CSS3 transitions. Try it in the dev tools, it's pretty cool.
 
 ## The Rest
 
-The code is atrocious at this point. I've just hacked the majority of it together over a night and it has too many global vars and magic numbers.
+I've improved the loop quite a bit and I am pretty happy with it. I also removed an extraneous loop I had farther up the file, along with lots of cleanup of other gunk.
 
-Also, I'm new at this clojure thing, so that isn't helping.
+I'm new at this clojure thing, but thoroughly enjoying the ride.
 
-Also, the loop doesn't quite feel right. I've commited to using core.async vs callback hell, so I'm trying to figure out the best way to make that work. In addition, I want classic snake style gameplay. This basically means that the board is a grid, and positions snap to the grid.
+A `timer` func uses timeout channels and is used by a `render-loop` function to throttle itself. It blocks until it's time, and then it hooks another function on `requestAnimationFrame`. That function puts a vector of the elapsed time and the current frame # onto a render channel. The main render loop block on the render channel to properly render. It looks nice and seems to work okay, but I still have to see what happpens if we dropped frames (although it should be fairly safe, it doesn't need to run anywhere near 60fps).
 
-Currenly, I drop a raf callback on a channel, which a go loop pulls and calcs elapsed time. I start the loop passing in a time. After elapsed time is > than my value, it puts on another channel. The game loop pulls from that channel. I'm just wrapping my head around core.async, but I can't guarantee you that my drawing code is running during the actual requestAnimationFrame. In addition, since I don't want 60fps, is there a better way to do this so I don't have an eternal callback on requestAnimationFrame?
+There is some tricks with the input loop, which I will explain at a later date. The main key event channel (for the arrow keys) is designed in a way so you can't go backwards onto yourself by hitting multiple arrow keys in between frames. In addtion, it allows the magic snake move of hitting two keys in succession to make quick turns. Basically, only one key event is pulled off the channel per render frame. The key channel is also sliding, so old events are dropped.
 
-I was thinking a go loop with a timeout channel. The loop would hook my render func with requestAnimationFrame after it's specified timeout.
-
-Regardless, I think there is a way to still use channels (and completely insulate myself from js interop), but still have a function running on requestAnimationFrame when I'd like. I just don't know the most flexible way to do that.
-
-More research is needed.
+My biggest concern previously was the render loop, and it (and the input) feel good and have the old timey snake feel. You really have to try it, it's hard to explain.

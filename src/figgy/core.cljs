@@ -1,5 +1,5 @@
 (ns ^:figwheel-always figgy.core
-  (:require-macros [cljs.core.async.macros :refer [go]])  
+  (:require-macros [cljs.core.async.macros :refer [go go-loop]])  
   (:require [cljs.core.async :refer [put! chan timeout <! >! sliding-buffer]]
             [goog.events :as events]))
 
@@ -7,11 +7,16 @@
 
 ;; define your app data so that it doesn't get over-written on reload
 
-(defonce app-state (atom {:title "Clojurescript Snake"
-                          :position '([3 5] [2 5] [1 5])
-                          :length 3
-                          :direction :right
-                          :apples []}))
+(def default-state {:title "Clojurescript Snake"
+                    :position '([3 5] [2 5] [1 5])
+                    :length 3
+                    :direction :right
+                    :apples (sorted-set)
+                    :running true})
+
+(defonce app-state (atom default-state))
+
+(def speed (atom 250))
 
 (defn on-js-reload []
   ;; optionally touch your app-state to force rerendering depending on
@@ -40,36 +45,12 @@
   (.arc ctx x y size 0 circ-angle)
   (.fill ctx))
 
-(def raf-chan (chan (sliding-buffer 1)))
-
-(defn raf-cb
-  [start-time timestamp]
-  (let [elapsed (- timestamp @start-time)]
-    (reset! start-time timestamp)
-    (go (>! raf-chan elapsed))))
-
-(def start-time (atom 0))
-
-(defn raf-loop [timestamp]
-  (do
-    (raf-cb start-time timestamp)
-    (.requestAnimationFrame js/window raf-loop)))
-
-(defn start-raf
-  []
-  (.requestAnimationFrame js/window raf-loop))
-
-(raf-loop 0)
-#_(start-raf)
-
-(def draw (chan))
-
 ; stolen from swannodette
 ; I should adjust my listen
 ; funcs to return channels vs
 ; defining global vars
 (defn listen [el type]
-  (let [out (chan)]
+  (let [out (chan (sliding-buffer 1))]
     (events/listen el type
       (fn [e] (put! out e)))
     out))
@@ -79,26 +60,12 @@
                  :right [1 0]
                  :down [0 1]})
 
-; keyboard handling code
-(let [keypress (listen js/window "keypress")]
-  (go (while true
-        (let [key-code (.-charCode (<! keypress)) dir (:direction @app-state)]
-          (case key-code
-                37 (when (contains? #{:up :down} dir) (swap! app-state #(assoc-in % [:direction] :left)))
-                38 (when (contains? #{:left :right} dir) (swap! app-state #(assoc-in % [:direction] :up)))
-                39 (when (contains? #{:up :down} dir) (swap! app-state #(assoc-in % [:direction] :right)))
-                40 (when (contains? #{:left :right} dir) (swap! app-state #(assoc-in % [:direction] :down)))
-                nil)))))
-
 (defn pos-add [[x1 y1] [x2 y2]]
   [(+ x1 x2) (+ y1 y2)])
 
-(defn calc-move [{len :length apps :apples pos :position dir :direction}]
-  {:title "It worked!"
-   :length len
-   :position (take len (cons (pos-add (first pos) (directions dir)) pos))
-   :direction dir
-   :apples apps})
+(defn calc-move [state]
+  (let [{:keys [position direction length]} state]
+    (assoc-in state [:position] (take length (cons (pos-add (first position) (directions direction)) position)))))
 
 (defn draw-snake [parts]
   (doseq [[x y] parts]
@@ -112,38 +79,119 @@
     (draw-box ctx (* 25 x) (* 25 y) 25 "rgb(200,0,0)")))
 
 (defn add-segment []
-  (swap! app-state (fn [state] (assoc-in state [:length] (inc (:length state))))))
+  (swap! app-state (fn [state]
+                     (let [length (:length state)]
+                       (assoc-in state [:length] (inc length))))))
 
-(defn collision [apples snake]
-  (doseq [apple apples]
-    (if (= apple snake)
-      (add-segment))))
+(defn stop! []
+  (swap! app-state (fn [state]
+                     (assoc-in state [:running] false))))
 
-; draw loop (and calcs positions etc
-(go
-  (while true
-    (let [i (<! draw)]
-      (.clearRect ctx 0 0 500 500)
-      (when (= 0 (rem i 100)) (do (println "Apple!") (gen-apple)))
-      (draw-snake (:position @app-state))
-      (draw-apples (:apples @app-state))
-      (collision (:apples @app-state) (first (:position @app-state)))
-      (swap! app-state calc-move))))
+(defn out-of-bounds [[x y]]
+  (or
+    (< x 0)
+    (> x 19)
+    (< y 0)
+    (> y 19)))
 
-; puts frame-number on draw channel
-; call-every milliseconds
-; it's based on time (not frames) but it only spits a number to draw
-(defn start-loop [call-every]
-  (go
-    (while true
-      (loop [elapsed (<! raf-chan)
-             acc 0
-             i 0]
-        (if (> acc call-every)
-          (do
-            (>! draw i)
-            (recur (<! raf-chan) 0 (inc i)))
-          (recur (<! raf-chan) (+ elapsed acc) i))))))
+(defn remove-apple [apple]
+  (swap! app-state (fn [state] 
+                     (let [apples (:apples state)]
+                       (case (count apples) 
+                         1 (assoc-in state [:apples] (sorted-set))
+                         (assoc-in state [:apples] (remove #(= apple %) apples)))))))
 
-(set! (.-innerText (.getElementById js/document "fancy")) (:title @app-state))
-(start-loop 150)
+(defn collision [apples snakes]
+  (cond
+    (out-of-bounds (first snakes)) (stop!)
+    (not (= (count snakes) (count (into #{} snakes)))) (stop!))
+  (doseq [[apple i] (zipmap apples (range (count apples)))]
+    (when (= apple (first snakes))
+      (do
+        (remove-apple apple)
+        (println "hit: " apple)
+        (add-segment)))))
+
+(defn set-text [selector text]
+  (set! (.-textContent (.querySelector js/document selector)) text))
+
+(set-text "#speed" @speed)
+(add-watch speed :speed-display (fn [_ _ _ new]
+                          (set-text "#speed" new)))
+
+(defn display-position [positions]
+  (let [chunks (for [x (range 0 (count positions) 4)] [x (+ 4 x)])
+        post (into [] positions)]
+    (->> chunks
+         (into [])
+         (map #(apply subvec (concat [positions] %)) chunks))))
+
+(add-watch app-state :stats-display (fn [_ _ _ new]
+                              (set-text "#full" (:position new))
+                              (set-text "#fancy" (:title new))
+                              (set-text "#running" (:running new))
+                              (set-text "#apples" (count (:apples new)))
+                              (set-text "#length" (:length new))))
+
+(defn timer [time]
+  (let [frame (chan)]
+    (go-loop []
+      (<! (timeout @time))
+      (>! frame 0)
+      (recur))
+    frame))
+
+(defn render-loop [time]
+  (let [render (chan)
+        frame (timer time)
+        start-time (atom (.. js/window -performance now))]
+    (go-loop [i 0]
+      (.requestAnimationFrame js/window (fn [timestamp]
+                                          (go
+                                            (>! render [(- timestamp @start-time) i])
+                                            (reset! start-time timestamp))))
+      (<! frame)
+      (recur (inc i)))
+    render))
+
+(defn set-direction [dir]
+  (swap! app-state #(assoc-in % [:direction] dir)))
+
+; keyboard handling code
+(let [keypress (listen js/window "keydown") dchan (chan (sliding-buffer 1))]
+  (defn get-input []
+    (go-loop [key-code (.-keyCode (<! keypress)) dir (:direction @app-state)]
+      (case key-code
+            37 (when (contains? #{:up :down} dir) (set-direction :left))
+            38 (when (contains? #{:left :right} dir) (set-direction :up))
+            39 (when (contains? #{:up :down} dir) (set-direction :right))
+            40 (when (contains? #{:left :right} dir) (set-direction :down))
+            nil)
+      (recur (.-keyCode (<! keypress)) (<! dchan)))
+    dchan))
+
+(defn start! []
+  (let [render (render-loop speed) dchan (get-input)]
+    (go (while (:running @app-state)
+          (let [[_ i] (<! render)]
+            (.clearRect ctx 0 0 500 500)
+            (draw-snake (:position @app-state))
+            (draw-apples (:apples @app-state))
+            (swap! app-state calc-move)
+            (collision (:apples @app-state) (:position @app-state))
+            (>! dchan (:direction @app-state))
+            (when (= 0 (rem i 24)) (gen-apple)))))))
+
+; debug key handling
+(let [keypress (listen js/window "keydown")]
+  (go-loop [key-code (.-keyCode (<! keypress)) dir (:direction @app-state)]
+    (case key-code
+          187 (swap! speed #(max 50 (- % 25)))
+          189 (swap! speed #(min 500 (+ 25 %)))
+          82 (do
+               (when-not (:running @app-state) (start!))
+               (reset! app-state default-state))
+          nil)
+    (recur (.-keyCode (<! keypress)) (:direction @app-state))))
+
+(start!)
