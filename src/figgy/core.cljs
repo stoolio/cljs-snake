@@ -46,9 +46,6 @@
   (.fill ctx))
 
 ; stolen from swannodette
-; I should adjust my listen
-; funcs to return channels vs
-; defining global vars
 (defn listen [el type]
   (let [out (chan (sliding-buffer 1))]
     (events/listen el type
@@ -63,9 +60,10 @@
 (defn pos-add [[x1 y1] [x2 y2]]
   [(+ x1 x2) (+ y1 y2)])
 
-(defn calc-move [state]
-  (let [{:keys [position direction length]} state]
-    (assoc-in state [:position] (take length (cons (pos-add (first position) (directions direction)) position)))))
+(defn calc-move [{:keys [length direction]} state]
+  (update-in state [:position] 
+             (fn [pos]
+               (take length (cons (pos-add (first pos) (directions direction)) pos)))))
 
 (defn draw-snake [parts]
   (doseq [[x y] parts]
@@ -79,13 +77,10 @@
     (draw-box ctx (* 25 x) (* 25 y) 25 "rgb(200,0,0)")))
 
 (defn add-segment []
-  (swap! app-state (fn [state]
-                     (let [length (:length state)]
-                       (assoc-in state [:length] (inc length))))))
+  (swap! app-state update-in [:length] inc))
 
 (defn stop! []
-  (swap! app-state (fn [state]
-                     (assoc-in state [:running] false))))
+  (swap! app-state assoc-in [:running] false))
 
 (defn out-of-bounds [[x y]]
   (or
@@ -95,36 +90,28 @@
     (> y 19)))
 
 (defn remove-apple [apple]
-  (swap! app-state (fn [state] 
-                     (let [apples (:apples state)]
-                       (case (count apples) 
-                         1 (assoc-in state [:apples] (sorted-set))
-                         (assoc-in state [:apples] (remove #(= apple %) apples)))))))
+  (swap! app-state update-in [:apples] (fn [a] remove #(= apple %) a)))
 
 (defn collision [apples snakes]
   (cond
     (out-of-bounds (first snakes)) (stop!)
-    (not (= (count snakes) (count (into #{} snakes)))) (stop!))
-  (doseq [[apple i] (zipmap apples (range (count apples)))]
+    (not (= (count snakes) (count (set snakes)))) (stop!))
+  (doseq [apple apples]
     (when (= apple (first snakes))
       (do
         (remove-apple apple)
         (println "hit: " apple)
         (add-segment)))))
 
+; Warning! cross browser bs ahead
+; may explode, handle with care
 (defn set-text [selector text]
-  (set! (.-textContent (.querySelector js/document selector)) text))
+  (set! (.-textContent (.querySelector js/document selector)) text)
+  (set! (.-innerText (.querySelector js/document selector)) text))
 
 (set-text "#speed" @speed)
 (add-watch speed :speed-display (fn [_ _ _ new]
                           (set-text "#speed" new)))
-
-(defn display-position [positions]
-  (let [chunks (for [x (range 0 (count positions) 4)] [x (+ 4 x)])
-        post (into [] positions)]
-    (->> chunks
-         (into [])
-         (map #(apply subvec (concat [positions] %)) chunks))))
 
 (add-watch app-state :stats-display (fn [_ _ _ new]
                               (set-text "#full" (:position new))
@@ -155,23 +142,23 @@
     render))
 
 (defn set-direction [dir]
-  (swap! app-state #(assoc-in % [:direction] dir)))
+  (swap! app-state assoc-in [:direction] dir))
 
 ; keyboard handling code
-(let [keypress (listen js/window "keydown") dchan (chan (sliding-buffer 1))]
+(let [keypress (listen js/window "keydown") ichan (chan (sliding-buffer 1))]
   (defn get-input []
-    (go-loop [key-code (.-keyCode (<! keypress)) dir (:direction @app-state)]
+    (go-loop [key-code (.-keyCode (<! keypress)) dir (<! ichan)]
       (case key-code
             37 (when (contains? #{:up :down} dir) (set-direction :left))
             38 (when (contains? #{:left :right} dir) (set-direction :up))
             39 (when (contains? #{:up :down} dir) (set-direction :right))
             40 (when (contains? #{:left :right} dir) (set-direction :down))
             nil)
-      (recur (.-keyCode (<! keypress)) (<! dchan)))
-    dchan))
+      (recur (.-keyCode (<! keypress)) (<! ichan)))
+    ichan))
 
 (defn start! []
-  (let [render (render-loop speed) dchan (get-input)]
+  (let [render (render-loop speed) ichan (get-input)]
     (go (while (:running @app-state)
           (let [[_ i] (<! render)]
             (.clearRect ctx 0 0 500 500)
@@ -179,7 +166,7 @@
             (draw-apples (:apples @app-state))
             (swap! app-state calc-move)
             (collision (:apples @app-state) (:position @app-state))
-            (>! dchan (:direction @app-state))
+            (>! ichan (:direction @app-state))
             (when (= 0 (rem i 24)) (gen-apple)))))))
 
 ; debug key handling
