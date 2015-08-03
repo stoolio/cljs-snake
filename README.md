@@ -1,5 +1,7 @@
 # Snake in Clojurescript
 
+[Play it here](http://stoolio.github.io/cljs-snake/)
+
 This is canvas based, but I would like to properly strip out the logic so you could have an ascii version or something. That would be fun.
 
 Anyways, you can move the snake. It stops when you hit the "walls" and he grows when you pick up a red block (apple?). You can also crash into yourself.
