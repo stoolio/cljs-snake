@@ -13,7 +13,7 @@ canvas {
   background-color: black;
   transition: all 3s ease-in;
   width: 70%;
-  max-height: 90%;
+  height: auto;
 }
 
 @media screen and (min-width: 700px) {

@@ -28,8 +28,10 @@
                          :source-map-timestamp true }}
              {:id "min"
               :source-paths ["src"]
-              :compiler {:output-to "resources/public/js/compiled/figgy.js"
-                         :main figgy.core                         
+              :compiler {:main figgy.core
+                         :asset-path "js/min/out"
+                         :output-to "resources/public/js/compiled/figgy.min.js"
+                         :output-dir "resources/public/js/min"
                          :optimizations :advanced
                          :pretty-print false}}]}
 
