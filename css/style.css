@@ -1,0 +1,41 @@
+/* some style */
+
+body {
+  background-color: white;
+  font-family: monospace;
+}
+
+#app {
+  overflow: hidden;
+}
+
+canvas {
+  background-color: black;
+  transition: all 3s ease-in;
+  width: 70%;
+  height: auto;
+}
+
+@media screen and (min-width: 700px) {
+  #stats {
+    float: right;
+    width: 250px;
+    max-width: 25%;
+  }
+
+  #stats h3 {
+    width: 125px;
+    max-width: 50%;
+    float: right;
+  }
+
+  #stats:last-child h3 {
+    clear: left;
+  }
+
+  #stats #full {
+    width: 250px;
+    float: left;
+    clear: both;
+  }
+}
